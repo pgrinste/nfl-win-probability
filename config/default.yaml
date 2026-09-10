@@ -1,0 +1,19 @@
+# Baseline configuration — ships with the repo so anyone can reproduce results.
+# The tuned gradient-boosting config lives in config/tuned.yaml (gitignored).
+
+model: logistic_baseline
+
+features:
+  - score_diff
+  - down
+  - distance_to_first
+  - time_frac
+  - field_pos_frac
+
+weights:
+  intercept: 0.0
+  score_diff: 0.18      # per point of lead, for the team about to run the play
+  down: -0.25           # later downs are worse (3rd/4th)
+  distance_to_first: -0.06   # per yard needed for first down
+  time_frac: 0.10       # more clock remaining is marginally better
+  field_pos_frac: 0.15  # deeper in opponent territory is better
