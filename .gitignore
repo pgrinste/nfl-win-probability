@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+venv/
+.venv/
+
+# Secrets — never commit these
+kaggle.json
+.env
+*.key
+
+# Tuned model config (crown jewels stay local; see README)
+config/tuned.yaml
+
+# Trained artifacts and raw downloads
+artifacts/
+data/raw/
+
+# Jupyter / editors
+.ipynb_checkpoints/
+.vscode/
+.idea/
+.DS_Store
