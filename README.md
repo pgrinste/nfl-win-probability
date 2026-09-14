@@ -8,16 +8,16 @@ Win probability and high-leverage play analysis for the modern NFL era (2015-202
 2. **Models** (`src/nfl/train.py`): logistic baseline vs tuned XGBoost, trained on seasons <=2023 and evaluated on unseen 2024-25. Hyperparameters are selected on the 2023 validation season.
 3. **Leverage analysis** (`src/nfl/leverage.py`): scores every play's pre- and post-play situation, ranks plays by how much they moved win probability, and charts the results.
 
-## Results (v1)
+## Results (v2)
 
-Evaluated on unseen seasons 2024-25 (n=39,536 plays), from five hand-built situation features:
+Evaluated on unseen seasons 2024-25 (n=39,536 plays), from six hand-built situation features - score differential, down & distance, clock, field position, and the team ELO gap at game start (computed in-dataset, no external ratings feed):
 
 | model | AUC |
 |---|---|
-| logistic baseline | 0.828 |
-| tuned XGBoost (max_depth=4) | **0.833** |
+| logistic baseline | 0.846 |
+| tuned XGBoost (max_depth=4) | **0.848** |
 
-The gap is modest on purpose - with only five features there isn't much left for a tree ensemble to find. The point of the repo is the reproducible pipeline, not a state-of-the-art number.
+The gap is modest on purpose - with only six features there isn't much left for a tree ensemble to find. The point of the repo is the reproducible pipeline, not a state-of-the-art number.
 
 ![ROC](output/model_roc.png)
 
@@ -25,13 +25,15 @@ Highest-leverage plays found (|change in win probability|):
 
 | season | matchup | play | WP before -> after |
 |---|---|---|---|
-| 2021 W20 | BUF vs KC | Allen deep pass to Davis, 27 yds (2:00 left) | 0.13 -> 0.84 |
-| 2017 W17 | CIN vs BAL | Dalton deep pass to Boyd, 49 yds (:53 left) | 0.14 -> 0.83 |
-| 2021 W11 | CHI vs BAL | Dalton deep pass to Goodwin, 49 yds (1:48 left) | 0.21 -> 0.90 |
-| 2020 W5 | SEA vs MIN | Wilson short pass to Metcalf (:20 left) | 0.24 -> 0.92 |
-| 2015 W13 | GB vs DET | Rodgers deep pass, 61 yds TD (:00 left) | 0.11 -> 0.78 |
+| 2020 W5 | SEA vs MIN | Wilson short pass to Metcalf, 6 yds (:20 left) | 0.26 -> 0.90 |
+| 2017 W17 | CIN vs BAL | Dalton deep pass to Boyd, 49 yds (:53 left) | 0.15 -> 0.78 |
+| 2015 W13 | GB vs DET | Rodgers deep pass to Rodgers, 61 yds TD (:00 left) | 0.24 -> 0.86 |
+| 2017 W19 | MIN vs NO | Keenum deep pass to Diggs, 61 yds TD (:10 left) | 0.27 -> 0.89 |
+| 2019 W5 | SEA vs LA | Wilson short pass to Carson, 5 yds (2:34 left) | 0.19 -> 0.80 |
 
 ![top leverage plays](output/top_leverage_plays.png)
+
+Interactive version - home-team win probability across every play of the highest-leverage games, with the decisive plays marked: [game_flow_interactive.html](output/game_flow_interactive.html) (opens in any browser).
 
 ## Two-tier configuration (why the repo is licensed GPLv3)
 
@@ -73,8 +75,9 @@ python -m nfl.leverage
 python -m pytest tests/
 ```
 
-## Known simplifications (v1)
+## Known simplifications (v2)
 
-- Post-play situation for the leverage metric is approximated: score differential comes from the data, down & distance are advanced by the result, and the clock is held constant.
+- Post-play situation for the leverage metric is still an approximation: score differential comes from the data, down & distance are advanced by the result, and the post-play clock is taken from the next play's actual remaining time (a 32 s decrement for a game's final play).
 - Label = "did the team on offense win this game", which conflates in-possession performance with what happens later; a per-drive label would be cleaner but noisier.
+- ELO ratings start at 1500 in 2015 and accumulate only from games inside this dataset, so early-era team gaps are compressed by construction.
 - LightGBM crashed (access violation) on some Windows/Intel builds during development; XGBoost is used instead - same algorithm family, different binary.

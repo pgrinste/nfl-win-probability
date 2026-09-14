@@ -24,3 +24,7 @@ data/raw/
 .vscode/
 .idea/
 .DS_Store
+
+# local state / review notes (not for public)
+PROJECT_LOG.md
+Updates*.txt
