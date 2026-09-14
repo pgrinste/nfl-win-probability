@@ -2,8 +2,9 @@
 
 For every play we score the pre-play situation, then build an approximate
 post-play situation (updated score differential from the data; down &
-distance advanced by the result; clock held constant - a documented v1
-simplification) and score that too. Leverage = |WP_after - WP_before|.
+distance advanced by the result; clock taken from the next play's actual
+remaining time in the same game - a 32 s decrement for the final play)
+and score that too. Leverage = |WP_after - WP_before|.
 """
 
 import os
@@ -18,10 +19,11 @@ from sklearn.metrics import roc_curve
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-FEATURES = ["score_differential", "down", "ydstogo", "time_frac", "field_pos_frac"]
+FEATURES = ["score_differential", "down", "ydstogo", "time_frac", "field_pos_frac",
+            "elo_diff"]
 
 
-def post_state(row):
+def post_state(row, time_frac_post):
     """Approximate the situation after this play completes."""
     sd = row["score_differential_post"] if pd.notna(row.get("score_differential_post")) else row["score_differential"]
     if bool(row.get("first_down", False)):
@@ -34,8 +36,9 @@ def post_state(row):
         "score_differential": sd,
         "down": down,
         "ydstogo": ydstogo,
-        "time_frac": row["time_frac"],          # clock held constant (v1)
+        "time_frac": time_frac_post,            # next play's actual clock (v2)
         "field_pos_frac": row["field_pos_frac"],
+        "elo_diff": row["elo_diff"],             # team strength doesn't change mid-play
     }
 
 
@@ -43,7 +46,12 @@ def compute_leverage(df, model):
     pre = df[FEATURES].to_numpy()
     wp_before = model.predict_proba(pre)[:, 1]
 
-    post_rows = [post_state(r) for _, r in df.iterrows()]
+    # post-play clock: the next play's actual remaining time in this game
+    # (rows are in play order); final plays fall back to a 32 s decrement.
+    nxt = df.groupby("game_id")["time_frac"].shift(-1)
+    post_time = nxt.fillna((df["time_frac"] - 32.0 / 3600.0).clip(lower=0.0))
+
+    post_rows = [post_state(r, t) for (_, r), t in zip(df.iterrows(), post_time)]
     post = pd.DataFrame(post_rows)[FEATURES].to_numpy()
     wp_after = model.predict_proba(post)[:, 1]
 
@@ -91,6 +99,54 @@ def plot_roc(df, baseline, tuned, path):
     plt.close(fig)
 
 
+def plot_game_flow(lev, path, n_games=5):
+    """Interactive game-flow charts for the highest-leverage games (plotly HTML).
+
+    Win probability is shown from the home team's perspective across every
+    play; the plays that moved it most are marked with their description.
+    """
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    top_games = lev.groupby("game_id")["leverage"].sum().nlargest(n_games)
+    seasons = lev.groupby("game_id")["season"].first()
+    fig = make_subplots(
+        rows=n_games, cols=1,
+        subplot_titles=[f"{int(seasons[gid])} {gid}" for gid in top_games.index],
+        vertical_spacing=0.12,
+    )
+    for row_i, gid in enumerate(top_games.index, start=1):
+        g = lev[lev["game_id"] == gid]
+        home_wp = np.where(g["home_team"] == g["posteam"], g["wp_before"], 1.0 - g["wp_before"])
+        fig.add_trace(
+            go.Scatter(x=np.arange(len(g)), y=home_wp, mode="lines",
+                       line=dict(color="#4c72b0", width=1.5),
+                       name=f"{g['home_team'].iloc[0]} win probability",
+                       showlegend=(row_i == 1), hovertext=[f"play {i + 1}" for i in range(len(g))],
+                       hoverinfo="x+y+text"),
+            row=row_i, col=1,
+        )
+        hot = g.nlargest(5, "leverage")
+        idx_in_g = [list(g.index).index(i) for i in hot.index]
+        fig.add_trace(
+            go.Scatter(x=[np.arange(len(g))[k] for k in idx_in_g],
+                       y=[home_wp[k] for k in idx_in_g], mode="markers",
+                       marker=dict(size=11, color=np.where(hot["wp_after"] > hot["wp_before"],
+                                                            "#2ecc71", "#e74c3c")),
+                       name="high-leverage plays",
+                       showlegend=(row_i == 1),
+                       text=[f"WP {r['wp_before']:.2f} -> {r['wp_after']:.2f}<br>"
+                             f"{str(r['desc'])[:80].replace(chr(10), ' ')}"
+                             for _, r in hot.iterrows()],
+                       hoverinfo="x+y+text"),
+            row=row_i, col=1,
+        )
+        fig.update_yaxes(title_text=None, range=[0, 1], row=row_i, col=1)
+    fig.update_layout(height=320 * n_games + 140, title="Game flow: home-team win probability with high-leverage plays marked",
+                      template="plotly_dark", legend=dict(orientation="h", y=1.02))
+    fig.write_html(path)
+
+
 def main():
     import joblib
 
@@ -102,6 +158,7 @@ def main():
     os.makedirs(os.path.join(REPO_ROOT, "output"), exist_ok=True)
     plot_top_plays(lev, os.path.join(REPO_ROOT, "output", "top_leverage_plays.png"))
     plot_roc(df, baseline, tuned, os.path.join(REPO_ROOT, "output", "model_roc.png"))
+    plot_game_flow(lev, os.path.join(REPO_ROOT, "output", "game_flow_interactive.html"))
 
     top = lev.nlargest(10, "leverage")
     print("top-10 leverage plays:")

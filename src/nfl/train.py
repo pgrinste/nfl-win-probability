@@ -24,7 +24,8 @@ REPO_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 CONFIG_DIR = os.path.join(REPO_ROOT, "config")
 ARTIFACTS_DIR = os.path.join(REPO_ROOT, "artifacts")
 
-FEATURES = ["score_differential", "down", "ydstogo", "time_frac", "field_pos_frac"]
+FEATURES = ["score_differential", "down", "ydstogo", "time_frac", "field_pos_frac",
+            "elo_diff"]
 TUNE_SEASON = 2023          # validation season for hyperparameter selection
 TEST_FROM = TUNE_SEASON + 1  # unseen seasons for the final report
 

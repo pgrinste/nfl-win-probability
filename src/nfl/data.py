@@ -41,16 +41,58 @@ def fetch_seasons(years, cache=True):
     return pd.concat(frames, ignore_index=True)
 
 
+def _game_finals(raw):
+    """Final score per game (last row by order_sequence carries the totals)."""
+    last = raw.sort_values("order_sequence").groupby("game_id", as_index=False).tail(1)
+    finals = {}
+    for _, r in last.iterrows():
+        h, a = float(r["total_home_score"]), float(r["total_away_score"])
+        winner = r["home_team"] if h > a else (r["away_team"] if a > h else None)
+        finals[r["game_id"]] = dict(
+            season=r["season"], week=r["week"],
+            home=r["home_team"], away=r["away_team"],
+            score_home=h, score_away=a, winner=winner,
+        )
+    return finals
+
+
 def _game_winners(raw):
     """Final score per game -> winning team."""
-    last = raw.sort_values("order_sequence").groupby("game_id", as_index=False).tail(1)
-    winners = {}
-    for _, r in last.iterrows():
-        if r["total_home_score"] > r["total_away_score"]:
-            winners[r["game_id"]] = r["home_team"]
-        elif r["total_away_score"] > r["total_home_score"]:
-            winners[r["game_id"]] = r["away_team"]
-    return winners
+    return {g: f["winner"] for g, f in _game_finals(raw).items() if f["winner"]}
+
+
+def _elo_before_games(finals):
+    """Each team's ELO rating before each game, from this dataset alone.
+
+    Self-contained (no external ratings feed): initial 1500, K = 20 + 4 per full
+    7-point margin tier (capped at 36), standard logistic expectation. Games are
+    processed in chronological order so ratings accumulate across the era.
+    """
+    elo = {}
+
+    def get(team):
+        if team not in elo:
+            elo[team] = 1500.0
+        return elo[team]
+
+    before = {}
+    ordered = sorted(finals.items(), key=lambda kv: (kv[1]["season"], kv[1]["week"], kv[0]))
+    for gid, g in ordered:
+        h, a = g["home"], g["away"]
+        eh, ea = get(h), get(a)
+        before[gid] = {h: eh, a: ea}
+        if g["winner"] is None:
+            continue  # OT tie: no update (rare)
+        margin = abs(g["score_home"] - g["score_away"])
+        k = min(36.0, 20.0 + 4.0 * int(margin // 7))
+        exp_h = 1.0 / (1.0 + 10 ** ((ea - eh) / 400.0))
+        if g["winner"] == h:
+            elo[h] = eh + k * (1.0 - exp_h)
+            elo[a] = ea - k * (1.0 - exp_h)
+        else:
+            elo[h] = eh - k * exp_h
+            elo[a] = ea + k * exp_h
+    return before
 
 
 def build_dataset(raw):
@@ -70,6 +112,13 @@ def build_dataset(raw):
     # derived features used by the models
     df["time_frac"] = (df["game_seconds_remaining"] / 3600.0).clip(0, 1)
     df["field_pos_frac"] = (df["yardline_100"].fillna(50.0) / 100.0).clip(0, 1)
+
+    # team strength: ELO gap at game start (offense minus defense), see _elo_before_games
+    elo_before = _elo_before_games(_game_finals(raw))
+    df["elo_diff"] = [
+        elo_before[g][p] - elo_before[g][d]
+        for g, p, d in zip(df["game_id"], df["posteam"], df["defteam"])
+    ]
     return df.reset_index(drop=True)
 
 
